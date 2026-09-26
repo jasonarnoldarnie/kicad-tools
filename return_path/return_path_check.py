@@ -87,10 +87,10 @@ CLASS_RULES = [
 ]
 SEV_RANK = {"FAIL": 0, "WARN": 1, "INFO": 2}
 
-# The HTML report draws the predicted return current as a band of half-width
-# w/2 + k*h around the trace: with the current density in the plane falling off
-# as 1/(1 + (x/h)^2), about 80 % of it flows within 3h of the centreline.
-# Capped so traces far from their plane don't produce huge bands.
+# The HTML report draws the predicted return current as a glow reaching out to
+# w/2 + k*h from the trace centreline: with the current density in the plane
+# falling off as 1/(1 + (x/h)^2), about 80 % of it flows within 3h.
+# Capped so traces far from their plane don't produce huge glows.
 RETURN_BAND_K = 3.0
 RETURN_BAND_MAX = 2.0
 
@@ -684,7 +684,7 @@ def analyse(args):
                 else:
                     ends.append((round(pts[-1][0], 2), round(pts[-1][1], 2), lname))
                 runs.append(dict(len=(j - i + 1) * ds, bounds=bounds, ends=ends, layer=lname,
-                                 ref=ref[0], h=h, hw=hw, mid=pts[(i + j) // 2],
+                                 ref=ref[0], h=h, hw=hw, w=w, mid=pts[(i + j) // 2],
                                  pts=pts[max(i - 1, 0):j + 2]))
                 s["unref"] += (j - i + 1) * ds
 
@@ -734,7 +734,8 @@ def analyse(args):
             layer, refl, mid, h = g[0]["layer"], g[0]["ref"], g[0]["mid"], g[0]["h"]
             trace_pts = [rnd(r["pts"]) for r in g]
             ov = dict(net=net, layer=layer, ref=refl, hw=round(g[0]["hw"], 3), mid=rnd([mid])[0],
-                      trace=trace_pts, detours=[], extra=0.0, kind="VOID", minor=False)
+                      w=round(max(r["w"] for r in g), 3), trace=trace_pts, detours=[], extra=0.0,
+                      kind="VOID", minor=False)
             if len(bounds) < 2:
                 s["area_void"] += total * h  # lower bound: return path unknown
                 if total > args.terminal_tol:

@@ -70,12 +70,15 @@ glob. First match wins; see [`return_path/classes.example.json`](return_path/cla
   `return_path/return_path_report.html`.
 
   Click a trace or a row to select a net and see its **signal path** (solid) and **predicted return
-  path**: a translucent, hatched band with a dashed centreline, so it can't be mistaken for copper.
-  The band runs in the plane directly under the trace (±3h wide, where about 80 % of the return
-  current flows), detours around plane gaps, and at each layer change goes out to the nearest return
-  via on one plane and back on the other. Each reference plane has its own colour, and a trace is
-  drawn in the colour of the plane carrying its return, so you can see where the return changes
-  plane.
+  path**: a soft glow, so it can't be mistaken for copper. The glow is brightest in the plane
+  directly under the trace and fades with distance the way the current density does, roughly
+  1/(1 + (x/h)²), out to ±3h, where about 80 % of the return current flows. It detours around plane
+  gaps, and at each layer change goes out to the nearest return via on one plane and back on the
+  other; a dashed line marks the path wherever it leaves the trace. Each reference plane has a
+  colour pair: a cool one for the plane and the return glow it carries, and its warm complement for
+  the traces returning through it (an orange F.Cu trace returns in a blue In1 glow, say). A trace
+  and its return stay distinct where they overlap, and a change of glow colour shows the return
+  changing plane.
 - `--json FILE` — summary and issues for scripting.
 - `--fail` — exit 1 if any net FAILs, for CI.
 
