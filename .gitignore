@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# OS / editor
+desktop.ini
+Thumbs.db
+.DS_Store
+.history/

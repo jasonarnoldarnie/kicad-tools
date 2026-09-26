@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy next to the board as return_path_classes.json. Keys are net-name globs (fnmatch, case-sensitive); values are one of rf, clock, high-speed, analog, medium, low-speed, static, unclassified. First match wins; unmatched nets fall back to the name rules in return_path_check.py.",
+  "nets": {
+    "/Micro/GPIO_0": "clock",
+    "Net-(C35-Pad1)": "clock",
+    "Net-(C1-Pad*)": "analog",
+    "Net-(D?-A)": "static"
+  }
+}

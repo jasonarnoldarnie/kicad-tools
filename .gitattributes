@@ -1,0 +1,5 @@
+# Sources are text; normalise to LF in the repo
+*.py   text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
