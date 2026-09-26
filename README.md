@@ -79,6 +79,11 @@ glob. First match wins; see [`return_path/classes.example.json`](return_path/cla
   the traces returning through it (an orange F.Cu trace returns in a blue In1 glow, say). A trace
   and its return stay distinct where they overlap, and a change of glow colour shows the return
   changing plane.
+- `--serve [PORT]` — a live report on `http://127.0.0.1:8765` (or PORT) with a **Rerun** button:
+  save the board in pcbnew, press Rerun, and the page reloads with fresh results, keeping the
+  selected net, view, zoom and filters. The page watches the board file's save time and flags when
+  the report is out of date. The server only answers on localhost; Ctrl+C stops it. Any `--html` or
+  `--json` file given is rewritten on each rerun.
 - `--json FILE` — summary and issues for scripting.
 - `--fail` — exit 1 if any net FAILs, for CI.
 

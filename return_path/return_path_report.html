@@ -52,6 +52,13 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 16px 48px; }
 h1 { font-size: 20px; margin: 0 0 2px; font-weight: 650; letter-spacing: -0.01em; }
 h2 { font-size: 15px; margin: 0 0 10px; font-weight: 650; }
 .meta { color: var(--muted); font-size: 12.5px; }
+/* live mode (--serve): rerun button and board-saved status, top right */
+.head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px 16px; flex-wrap: wrap; }
+.live { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
+.live[hidden] { display: none; }
+.live.stale #live-status { color: var(--warn); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+.btn:disabled { opacity: .6; cursor: default; }
 .num { font-variant-numeric: tabular-nums; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 16px 0; }
 .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
@@ -186,9 +193,15 @@ tbody tr.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 </head>
 <body>
 <main>
-  <header>
-    <h1>Return path report</h1>
-    <div class="meta" id="meta"></div>
+  <header class="head">
+    <div>
+      <h1>Return path report</h1>
+      <div class="meta" id="meta"></div>
+    </div>
+    <div class="live" id="live" hidden>
+      <span id="live-status" role="status"></span>
+      <button class="btn" id="rerun">Rerun</button>
+    </div>
   </header>
   <section class="tiles" id="tiles"></section>
 
@@ -262,7 +275,8 @@ const netLayers = net => [...new Set(D.geo.tracks.filter(t => t.n === net).map(t
   const m = D.meta, n = D.nets;
   const refs = Object.entries(m.references).sort((a, b) => LAYER_ORDER(a[0]) - LAYER_ORDER(b[0]))
     .map(([s, r]) => `${s}→${r.layer} (h ${r.h} mm)`).join(' · ');
-  $('#meta').innerHTML = `${esc(m.board)} · generated ${esc(m.generated.replace('T', ' '))} · ${esc(refs)}`;
+  const saved = m.board_mtime ? ` from the board saved ${esc(m.board_mtime.slice(11))}` : '';
+  $('#meta').innerHTML = `${esc(m.board)} · generated ${esc(m.generated.replace('T', ' '))}${saved} · ${esc(refs)}`;
   const fail = n.filter(s => s.status === 'FAIL'), warn = n.filter(s => s.status === 'WARN');
   const worst = n.filter(s => s.ratio != null).sort((a, b) => b.ratio - a.ratio)[0];
   const open = n.filter(s => s.return_est == null).length;
@@ -738,7 +752,83 @@ $('#table thead').onclick = e => {
 };
 $('#table tbody').onclick = e => { const tr = e.target.closest('tr'); if (tr) { select(tr.dataset.net, true); svg.scrollIntoView({ behavior: 'smooth', block: 'center' }); } };
 
+// ---------- keep the view across a rerun (live mode reloads the page with the new report)
+const VIEW_KEY = `return-path-view:${D.meta.board}`;
+function saveView() {
+  try {
+    sessionStorage.setItem(VIEW_KEY, JSON.stringify({
+      sel: state.sel, view: state.view, colorBy: state.colorBy, show: state.show, sort: state.sort,
+      cls: [...state.cls], status: [...state.status], q: state.q, vb, autoFit, scrollY: window.scrollY,
+    }));
+  } catch (e) { /* no storage: the rerun still works, the view just resets */ }
+}
+function takeSavedView() {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null');
+    sessionStorage.removeItem(VIEW_KEY);
+    return v;
+  } catch (e) { return null; }
+}
+
+const savedView = takeSavedView();
+if (savedView) {
+  const v = savedView;
+  if (v.view === 'all' || checkedLayers.includes(v.view)) state.view = v.view;
+  if (v.colorBy) state.colorBy = v.colorBy;
+  Object.assign(state.show, v.show || {});
+  if (v.sort) state.sort = v.sort;
+  state.cls = new Set((v.cls || []).filter(c => CLASSES.includes(c)));
+  state.status = new Set(v.status || []);
+  state.q = v.q || '';
+  if (NETS[v.sel]) state.sel = v.sel;  // the net may have gone in the rerun
+}
 buildControls(); render(); fitBoard(); renderDetail(); buildFilters(); renderTable();
+if (savedView) {
+  if (savedView.vb && !savedView.autoFit) { vb = savedView.vb; setVB(); autoFit = false; }
+  requestAnimationFrame(() => window.scrollTo(0, savedView.scrollY || 0));
+}
+
+// ---------- live mode: served by `return_path_check.py --serve`, so the page can ask for a rerun
+if (D.meta.live) {
+  const box = $('#live'), msg = $('#live-status'), btn = $('#rerun');
+  const time = iso => (iso || '').slice(11, 19);
+  let running = false, lastError = '';
+  box.hidden = false;
+  msg.textContent = `Board saved ${time(D.meta.board_mtime)}`;
+  btn.onclick = async () => {
+    running = true; lastError = '';
+    btn.disabled = true; btn.textContent = 'Running…'; msg.textContent = 'Re-reading the board…';
+    try {
+      const r = await fetch('/api/rerun', { method: 'POST', headers: { 'X-Return-Path': 'rerun' } });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      saveView();
+      location.reload();
+    } catch (e) {
+      running = false; lastError = `Rerun failed: ${e.message}`;
+      btn.disabled = false; btn.textContent = 'Rerun';
+      box.classList.add('stale'); msg.textContent = lastError;
+    }
+  };
+  // Watch the board file so the page can say when this report is out of date.
+  const poll = async () => {
+    if (running) return;
+    try {
+      const j = await (await fetch('/api/status', { cache: 'no-store' })).json();
+      const stale = j.board_mtime !== D.meta.board_mtime;
+      box.classList.toggle('stale', stale || !!lastError);
+      btn.classList.toggle('primary', stale);
+      btn.disabled = false;
+      msg.textContent = lastError || (stale ? `Board saved ${time(j.board_mtime)} · this report is out of date`
+        : `Up to date with the board saved ${time(D.meta.board_mtime)}`);
+    } catch (e) {
+      btn.disabled = true; box.classList.add('stale');
+      msg.textContent = 'Checker server not running · start it again with --serve';
+    }
+  };
+  poll();
+  setInterval(poll, 3000);
+}
 </script>
 </body>
 </html>

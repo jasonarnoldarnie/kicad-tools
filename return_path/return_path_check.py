@@ -50,6 +50,7 @@ Run with KiCad's bundled Python (it provides pcbnew and numpy):
   ... --netclass MS_50R --netclass DP_90R     only controlled-impedance nets
   ... --net '/Micro/*' --include-power        glob on net names
   ... --json report.json --fail               machine output, exit 1 on FAIL
+  ... --serve                                 live report on http://127.0.0.1:8765 with a Rerun button
 
 Coordinates are board (page) coordinates in mm, as shown in pcbnew's status
 bar with the default origin.
@@ -886,8 +887,14 @@ def analyse(args):
                 thresholds=dict(max_detour=args.max_detour, max_stitch=args.max_stitch,
                                 max_cap=args.max_cap, edge_k=args.edge_k, report_min=args.report_min),
                 references={k: dict(layer=v[0], h=round(v[1], 4)) for k, v in refs.items()},
-                planes=sorted(planes, key=lambda l: zpos.get(l, 0)), return_band_k=RETURN_BAND_K)
+                planes=sorted(planes, key=lambda l: zpos.get(l, 0)), return_band_k=RETURN_BAND_K,
+                board_mtime=file_time(args.board), live=False)
     return dict(meta=meta, nets=list(summary.values()), issues=issues, overlays=overlays, geo=geo)
+
+
+def file_time(path):
+    """A file's modification time as an ISO string, to tell when the board was saved after a run."""
+    return datetime.datetime.fromtimestamp(os.path.getmtime(path)).isoformat(timespec="seconds")
 
 
 # --------------------------------------------------------------------------
@@ -925,21 +932,130 @@ def report(result, args):
             loc = "" if i["x"] is None else f" @ ({i['x']:.2f}, {i['y']:.2f})"
             capped = f" (capped from {i['raw']})" if i["raw"] != i["severity"] else ""
             print(f"  {i['severity']:4} {i['kind']:8} {i['net']} [{i['layer']}]{loc}: {i['msg']}{capped}")
+    nfail, line = summary_line(result)
+    print(f"\n{line}")
+    return nfail
+
+
+def summary_line(result):
     nets = result["nets"]
     nf = sum(1 for s in nets if s["status"] == "FAIL")
     nw = sum(1 for s in nets if s["status"] == "WARN")
-    print(f"\n{len(nets)} nets checked: {nf} FAIL, {nw} WARN")
-    return nf
+    return nf, f"{len(nets)} nets checked: {nf} FAIL, {nw} WARN"
 
 
-def write_html(result, path):
+def render_html(result):
     template = os.path.join(os.path.dirname(os.path.abspath(__file__)), "return_path_report.html")
     with open(template, encoding="utf-8") as f:
         html = f.read()
     data = json.dumps(result, separators=(",", ":")).replace("</", "<\\/")
-    html = html.replace("/*__DATA__*/null", data)
+    return html.replace("/*__DATA__*/null", data)
+
+
+def write_html(result, path):
     with open(path, "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(render_html(result))
+
+
+def write_json(result, path):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({k: result[k] for k in ("meta", "nets", "issues")}, f, indent=2)
+
+
+# --------------------------------------------------------------------------
+# Live report
+
+def serve(args):
+    """Serve the HTML report on localhost; its Rerun button re-analyses the saved board in place.
+
+    HTTP runs on worker threads, because a browser can hold idle connections open, while every
+    analysis runs here on the main thread, one at a time, since pcbnew isn't thread-safe."""
+    import http.server
+    import queue
+    import threading
+
+    live = {}
+    jobs = queue.Queue()
+
+    def run():
+        result = analyse(args)
+        result["meta"]["live"] = True
+        live["html"] = render_html(result).encode("utf-8")
+        live["generated"] = result["meta"]["generated"]
+        if args.json:
+            write_json(result, args.json)
+        if args.html:
+            write_html(result, args.html)
+        line = summary_line(result)[1]
+        print(f"[{datetime.datetime.now():%H:%M:%S}] {line}", flush=True)
+        return line
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def send(self, code, body, ctype="application/json"):
+            if isinstance(body, dict):
+                body = json.dumps(body).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def local(self):
+            # Only answer requests addressed to this machine, which guards against DNS rebinding.
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
+            if host in ("127.0.0.1", "localhost", "[::1]"):
+                return True
+            self.send(403, b"forbidden", "text/plain")
+            return False
+
+        def do_GET(self):
+            if not self.local():
+                return
+            path = self.path.split("?", 1)[0]
+            if path in ("/", "/index.html"):
+                self.send(200, live["html"], "text/html; charset=utf-8")
+            elif path == "/api/status":
+                self.send(200, dict(board_mtime=file_time(args.board), generated=live["generated"]))
+            else:
+                self.send(404, b"not found", "text/plain")
+
+        def do_POST(self):
+            if not self.local():
+                return
+            # The custom header makes a cross-site POST need a CORS preflight, which this server refuses.
+            if self.path != "/api/rerun" or self.headers.get("X-Return-Path") != "rerun":
+                self.send(404, b"not found", "text/plain")
+                return
+            job = dict(done=threading.Event())
+            jobs.put(job)
+            job["done"].wait()
+            if "error" in job:
+                self.send(200, dict(ok=False, error=job["error"]))
+            else:
+                self.send(200, dict(ok=True, summary=job["line"]))
+
+        def log_message(self, fmt, *a):  # keep the console to one line per run
+            pass
+
+    run()
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.serve), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(f"Live report on http://127.0.0.1:{args.serve}/  (Ctrl+C to stop)", flush=True)
+    try:
+        while True:
+            try:
+                job = jobs.get(timeout=0.5)  # time out now and then so Ctrl+C gets through on Windows
+            except queue.Empty:
+                continue
+            try:
+                job["line"] = run()
+            except Exception as ex:  # a half-written board, say: keep serving the last good report
+                job["error"] = f"{type(ex).__name__}: {ex}"
+            finally:
+                job["done"].set()
+    except KeyboardInterrupt:
+        pass
 
 
 def main():
@@ -966,15 +1082,19 @@ def main():
     ap.add_argument("--no-fill", action="store_true", help="use zone fills saved in the file")
     ap.add_argument("--json", help="write summary + issues as JSON")
     ap.add_argument("--html", help="write an interactive HTML report (board view + per-net table)")
+    ap.add_argument("--serve", nargs="?", type=int, const=8765, metavar="PORT",
+                    help="serve a live HTML report on http://127.0.0.1:PORT (8765) with a Rerun button")
     ap.add_argument("--fail", action="store_true", help="exit 1 if any net FAILs")
     ap.add_argument("-v", "--verbose", action="store_true", help="also list INFO items (every via)")
     args = ap.parse_args()
 
+    if args.serve is not None:
+        serve(args)
+        return
     result = analyse(args)
     nfail = report(result, args)
     if args.json:
-        with open(args.json, "w", encoding="utf-8") as f:
-            json.dump({k: result[k] for k in ("meta", "nets", "issues")}, f, indent=2)
+        write_json(result, args.json)
     if args.html:
         write_html(result, args.html)
         print(f"HTML report: {args.html}")
