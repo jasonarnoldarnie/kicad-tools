@@ -14,6 +14,8 @@
   --fail: #d13b40; --warn: #b87d00; --ok: #2b8f5a; --info: #3e63dd; --detour: #e8590c; --edge: #e0a100;
   --c-rf: #c2298a; --c-clock: #e8590c; --c-high-speed: #c99400; --c-analog: #0f9488;
   --c-medium: #3e63dd; --c-low-speed: #8e4ec6; --c-static: #7c7f88; --c-unclassified: #a5a8ae;
+  /* reference planes, in stack order; a signal trace takes the colour of the plane its return uses */
+  --rp-0: #0a8fb5; --rp-1: #7a4fe0; --rp-2: #5c940d; --rp-3: #c2255c;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -24,6 +26,7 @@
     --fail: #ff5c61; --warn: #f5b323; --ok: #3dd68c; --info: #8098ff; --detour: #ff8b3e; --edge: #f5c323;
     --c-rf: #f06bc0; --c-clock: #ff8b3e; --c-high-speed: #f5c323; --c-analog: #2ec4b6;
     --c-medium: #8098ff; --c-low-speed: #b98ef0; --c-static: #9b9ea6; --c-unclassified: #6f7278;
+    --rp-0: #38c7f2; --rp-1: #b08cff; --rp-2: #94d82d; --rp-3: #f783ac;
   }
 }
 :root[data-theme="dark"] {
@@ -34,6 +37,7 @@
   --fail: #ff5c61; --warn: #f5b323; --ok: #3dd68c; --info: #8098ff; --detour: #ff8b3e; --edge: #f5c323;
   --c-rf: #f06bc0; --c-clock: #ff8b3e; --c-high-speed: #f5c323; --c-analog: #2ec4b6;
   --c-medium: #8098ff; --c-low-speed: #b98ef0; --c-static: #9b9ea6; --c-unclassified: #6f7278;
+  --rp-0: #38c7f2; --rp-1: #b08cff; --rp-2: #94d82d; --rp-3: #f783ac;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
@@ -65,22 +69,38 @@ h2 { font-size: 15px; margin: 0 0 10px; font-weight: 650; }
   border: 1px solid var(--border); }
 #board { display: block; width: 100%; height: min(62vh, 640px); min-height: 280px; cursor: grab; touch-action: none; }
 #board.dragging { cursor: grabbing; }
-.hint { position: absolute; left: 10px; bottom: 8px; font-size: 11.5px; color: var(--muted); pointer-events: none; }
+.hint { position: absolute; left: 8px; bottom: 6px; font-size: 11.5px; color: var(--muted); pointer-events: none;
+  background: color-mix(in srgb, var(--canvas) 85%, transparent); padding: 2px 7px; border-radius: 6px; }
 #tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 16px #0003;
   display: none; z-index: 10; max-width: 320px; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-top: 10px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
-.sw { width: 18px; height: 0; border-top: 3px solid; display: inline-block; }
+.legend .note { flex-basis: 100%; display: block; }
+.sw { width: 18px; height: 0; border-top: 3px solid; display: inline-block; flex: none; }
 .sw.dash { border-top-style: dashed; }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+/* legend swatch for a predicted-return band: translucent, hatched, dashed centreline */
+.band { width: 26px; height: 11px; border-radius: 6px; display: inline-block; flex: none; position: relative;
+  background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--c) 75%, transparent) 0 1.2px, transparent 1.2px 3.6px),
+    color-mix(in srgb, var(--c) 22%, transparent); }
+.band::after { content: ''; position: absolute; left: 2px; right: 2px; top: 50%; margin-top: -.75px;
+  border-top: 1.5px dashed var(--c); }
+.band.sm { width: 18px; height: 9px; }
+.ring { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--text); background: var(--canvas);
+  display: inline-block; flex: none; }
+.xm { color: var(--fail); font-weight: 700; }
 .badge { display: inline-block; font-size: 11px; font-weight: 650; padding: 1px 7px; border-radius: 99px;
   border: 1px solid currentColor; line-height: 1.5; white-space: nowrap; }
 .b-FAIL { color: var(--fail); } .b-WARN { color: var(--warn); } .b-OK { color: var(--ok); } .b-INFO { color: var(--info); }
 .cls { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 #detail .name { font-weight: 650; font-size: 15px; word-break: break-all; }
+.explain { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; }
 .stats { display: grid; grid-template-columns: auto auto; gap: 3px 12px; font-size: 13px; margin: 10px 0; }
 .stats dt { color: var(--muted); } .stats dd { margin: 0; text-align: right; }
+.stats dt.sub { padding-left: 10px; display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.stats dt.sub .sw { width: 14px; }
+.stats dd.sub { color: var(--muted); font-size: 12.5px; }
 .issues { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px;
   max-height: 340px; overflow: auto; }
 .issues li { font-size: 12.5px; padding: 6px 8px; border-radius: 8px; background: var(--surface-2); }
@@ -113,20 +133,38 @@ tbody tr.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 /* board */
 #board .outline { fill: var(--substrate); stroke: var(--outline); stroke-width: 1.2px; vector-effect: non-scaling-stroke; }
 #board .plane path { stroke: none; fill-rule: evenodd; }
+#board .plane-edge path { fill: none; stroke-width: 1px; vector-effect: non-scaling-stroke; opacity: .6; }
 #board .pad { fill: var(--pad); opacity: .55; }
 #board .ctx { stroke: var(--ctx); opacity: .45; fill: none; stroke-linecap: round; stroke-linejoin: round; }
 #board .trk { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 #board .trk.other { opacity: .22; }
 #board .via { fill: var(--via); }
 #board .ovl { fill: none; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
+#board .ovl.dim { opacity: .55; }
 #board .ovl-edge { stroke: var(--edge); stroke-width: 7px; opacity: .35; fill: none;
   vector-effect: non-scaling-stroke; stroke-linecap: round; }
 #board text { font-family: system-ui, sans-serif; paint-order: stroke; stroke: var(--canvas); stroke-width: 2.5px;
   vector-effect: non-scaling-stroke; pointer-events: none; }
-#board .ref { fill: var(--muted); font-size: .8px; text-anchor: middle; dominant-baseline: middle; }
-#board .lbl { font-weight: 700; font-size: .9px; }
+/* label sizes are set from the zoom level in setVB(), so text stays the same size on screen */
+#board .ref { fill: var(--muted); font-size: var(--fs-ref, .8px); text-anchor: middle; dominant-baseline: middle; }
+#board .lbl { font-weight: 700; font-size: var(--fs-lbl, .9px); text-anchor: middle; }
 #board.has-sel [data-net]:not(.sel) { opacity: .1; }
 #board.has-sel .trk.sel { filter: drop-shadow(0 0 .25px currentColor); }
+/* selected net: signal path + predicted return path (drawn in #sel, replacing the net's own overlays) */
+#board.retmode .trk.sel, #board.retmode .ovl.sel, #board.retmode .lbl.sel { display: none; }
+#board .rband { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+#board .rline { fill: none; stroke-width: 1.4px; vector-effect: non-scaling-stroke; stroke-dasharray: 6 4; }
+#board .rcap { stroke: var(--muted); stroke-width: 1.4px; vector-effect: non-scaling-stroke; stroke-dasharray: 2 3; }
+#board .gap { fill: none; stroke: var(--fail); stroke-width: 11px; opacity: .45; vector-effect: non-scaling-stroke;
+  stroke-linecap: round; stroke-linejoin: round; }
+#board .sig-case { fill: none; stroke: var(--canvas); stroke-width: 5px; vector-effect: non-scaling-stroke;
+  stroke-linecap: round; stroke-linejoin: round; }
+#board .sig { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+#board .sig-min { fill: none; stroke-width: 2.2px; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
+#board .svia { fill: var(--canvas); stroke: var(--text); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+#board .rvia { fill: var(--canvas); stroke: var(--text); stroke-width: 2px; vector-effect: non-scaling-stroke; }
+#board .rvia-dot { fill: var(--text); pointer-events: none; }
+#board .xmark { fill: none; stroke: var(--fail); stroke-width: 2.6px; vector-effect: non-scaling-stroke; stroke-linecap: round; }
 #board .marker { fill: none; stroke: var(--accent); stroke-width: 2.5px; vector-effect: non-scaling-stroke;
   animation: pulse 1.2s ease-out 3; }
 @keyframes pulse { from { opacity: 1; } to { opacity: .2; } }
@@ -152,7 +190,7 @@ tbody tr.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
       </div>
       <div class="board-wrap">
         <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
-        <div class="hint">Scroll to zoom · drag to pan · click a trace to select · viewed from top</div>
+        <div class="hint">Scroll to zoom · drag to pan · click a trace or table row to see its return path · viewed from top</div>
       </div>
       <div class="legend" id="legend"></div>
     </div>
@@ -182,7 +220,7 @@ const svg = $('#board');
 
 const state = {
   view: null, colorBy: 'status', sel: null,
-  show: { plane: true, detours: true, stitch: true, edges: true, pads: true, labels: false },
+  show: { returns: true, plane: true, detours: true, stitch: true, edges: true, pads: true, labels: false },
   sort: { key: 'status', dir: 1 }, cls: new Set(), status: new Set(), q: ''
 };
 
@@ -194,6 +232,15 @@ const netColor = n => {
 const sevColor = s => `var(--${(s || 'INFO') === 'INFO' ? 'ok' : s.toLowerCase()})`;
 const pts = p => p.map(q => q[0] + ',' + q[1]).join(' ');
 const pathD = cs => cs.map(c => 'M' + c.map(q => q[0] + ' ' + q[1]).join('L') + 'Z').join('');
+
+// Reference planes get a colour each, in stack order. A signal trace is drawn in the colour of the
+// plane that carries its return current, so a trace and its return band read as a pair.
+const PLANES = D.meta.planes || [];
+const planeIdx = p => Math.max(0, PLANES.indexOf(p)) % 4;
+const planeVar = p => `var(--rp-${planeIdx(p)})`;
+const refOf = l => (D.meta.references[l] || {}).layer;
+const sigColor = l => refOf(l) ? planeVar(refOf(l)) : 'var(--text)';
+const netLayers = net => [...new Set(D.geo.tracks.filter(t => t.n === net).map(t => t.l))];
 
 // ---------- header
 (function header() {
@@ -227,14 +274,31 @@ function buildControls() {
   }).join('');
   $('#views').onclick = e => { const b = e.target.closest('button'); if (b) { state.view = b.dataset.v; buildControls(); render(); } };
   for (const b of $('#colorby').children) b.setAttribute('aria-pressed', b.dataset.v === state.colorBy);
-  $('#colorby').onclick = e => { const b = e.target.closest('button'); if (b) { state.colorBy = b.dataset.v; buildControls(); render(); renderLegend(); } };
-  const labels = { plane: 'Plane', detours: 'Void detours', stitch: 'Via returns', edges: 'Plane-edge', pads: 'Pads', labels: 'Refs' };
+  $('#colorby').onclick = e => { const b = e.target.closest('button'); if (b) { state.colorBy = b.dataset.v; buildControls(); render(); } };
+  const labels = { returns: 'Return path', plane: 'Plane', detours: 'Void detours', stitch: 'Via returns', edges: 'Plane-edge', pads: 'Pads', labels: 'Refs' };
   $('#toggles').innerHTML = Object.entries(labels).map(([k, v]) =>
     `<label><input type="checkbox" data-k="${k}" ${state.show[k] ? 'checked' : ''}>${v}</label>`).join('');
-  $('#toggles').onchange = e => { state.show[e.target.dataset.k] = e.target.checked; render(); };
+  $('#toggles').onchange = e => { state.show[e.target.dataset.k] = e.target.checked; render(); renderDetail(); };
 }
 
 function renderLegend() {
+  const net = state.sel;
+  if (net && state.show.returns) {
+    const layers = netLayers(net).sort((a, b) => LAYER_ORDER(a) - LAYER_ORDER(b));
+    const O = D.overlays, mine = x => x.net === net;
+    const planes = [...new Set(O.returns.filter(mine).map(r => r.plane))].sort((a, b) => planeIdx(a) - planeIdx(b));
+    const hasVia = O.vias.some(v => mine(v) && v.to), hasGap = O.voids.some(v => mine(v) && !v.minor);
+    const hasNone = O.voids.some(v => mine(v) && v.kind !== 'VOID') || O.vias.some(v => mine(v) && !v.to);
+    $('#legend').innerHTML = [
+      ...layers.map(l => `<span><i class="sw" style="border-color:${sigColor(l)};border-top-width:4px"></i>signal on ${esc(l)}</span>`),
+      ...planes.map(p => `<span><i class="band" style="--c:${planeVar(p)}"></i>predicted return on ${esc(p)}</span>`),
+      hasVia ? `<span><i class="ring"></i>return via</span>` : '',
+      hasGap ? `<span><i class="sw" style="border-color:var(--fail);opacity:.5;border-top-width:8px"></i>trace over a plane gap</span>` : '',
+      hasNone ? `<span><b class="xm">✕</b>no return path</span>` : '',
+      `<span class="note">Hatched bands are a model of where the return current flows, not copper: in the plane directly under the trace (±${D.meta.return_band_k}h carries about 80% of it), around gaps, and through the nearest return via at each layer change.</span>`,
+    ].join('');
+    return;
+  }
   const items = state.colorBy === 'cls'
     ? CLASSES.filter(c => D.nets.some(n => n.cls === c)).map(c => `<span><i class="sw" style="border-color:var(--c-${c})"></i>${c}</span>`)
     : [['fail', 'FAIL'], ['warn', 'WARN'], ['ok', 'OK']].map(([c, l]) => `<span><i class="sw" style="border-color:var(--${c})"></i>${l} net</span>`);
@@ -242,8 +306,9 @@ function renderLegend() {
     `<span><i class="sw" style="border-color:var(--fail)"></i>trace over void</span>`,
     `<span><i class="sw dash" style="border-color:var(--detour)"></i>return detour</span>`,
     `<span><i class="sw dash" style="border-color:var(--ok)"></i>via → nearest return via</span>`,
-    `<span><i class="sw" style="border-color:var(--edge);opacity:.5;border-top-width:6px"></i>near plane edge</span>`,
-    `<span><i class="dot" style="background:var(--plane)"></i>reference plane</span>`);
+    `<span><i class="sw" style="border-color:var(--edge);opacity:.5;border-top-width:6px"></i>near plane edge</span>`);
+  if (state.view === 'all') items.push(...PLANES.map(p => `<span><i class="sw" style="border-color:${planeVar(p)};border-top-width:1px"></i>${esc(p)} edges</span>`));
+  else items.push(`<span><i class="dot" style="background:var(--plane)"></i>reference plane</span>`);
   $('#legend').innerHTML = items.join('');
 }
 
@@ -254,14 +319,22 @@ function render() {
   const onView = l => all || l === v;
   const side = all ? null : (v === 'B.Cu' ? 'B' : v === 'F.Cu' ? 'F' : null);
   const g = D.geo, o = D.overlays;
-  let s = `<path class="outline" fill-rule="evenodd" d="${pathD(g.outline)}"/>`;
+  let s = '<defs>';
+  for (let k = 0; k < 4; k++)
+    s += `<pattern id="hatch-${k}" patternUnits="userSpaceOnUse" width=".24" height=".24" patternTransform="rotate(45)"><line x1=".06" y1="0" x2=".06" y2=".24" style="stroke:var(--rp-${k});stroke-width:.07"/></pattern>`;
+  s += `</defs><path class="outline" fill-rule="evenodd" d="${pathD(g.outline)}"/>`;
 
   if (state.show.plane) {
-    const planeLayers = all ? [] : [ref];
-    s += '<g class="plane">';
-    for (const l of planeLayers) for (const z of (g.planes[l] || []))
-      s += `<path d="${pathD(z.c)}" style="fill:var(${z.net.toUpperCase().startsWith('GND') ? '--plane' : '--plane-alt'})"/>`;
-    s += '</g>';
+    if (all) {
+      // both planes at once: draw their edges (outline and every void) in the plane's colour
+      for (const l of PLANES) if (g.planes[l])
+        s += `<g class="plane-edge" style="stroke:${planeVar(l)}">${g.planes[l].map(z => `<path d="${pathD(z.c)}"/>`).join('')}</g>`;
+    } else {
+      s += '<g class="plane">';
+      for (const z of (g.planes[ref] || []))
+        s += `<path d="${pathD(z.c)}" style="fill:var(${z.net.toUpperCase().startsWith('GND') ? '--plane' : '--plane-alt'})"/>`;
+      s += '</g>';
+    }
   }
   if (state.show.pads) {
     s += '<g>' + g.pads.filter(p => all || p[4] === '*' || p[4] === side)
@@ -288,7 +361,7 @@ function render() {
   // void overlays
   if (state.show.detours) {
     s += '<g>';
-    for (const ov of o.voids.filter(x => onView(x.layer))) {
+    for (const ov of o.voids.filter(x => onView(x.layer) && !x.minor)) {
       const bad = ov.kind === 'TERMINAL' ? 'var(--warn)' : 'var(--fail)';
       const tip = nice(`${ov.net} · ${ov.kind}${ov.kind === 'VOID' ? ` · return +${ov.extra.toFixed(2)} mm` : ''}`);
       for (const tr of ov.trace)
@@ -296,7 +369,7 @@ function render() {
       for (const d of ov.detours) {
         s += `<polyline class="ovl" data-net="${esc(ov.net)}" data-tip="${tip}" style="stroke:var(--detour);stroke-width:2.2px;stroke-dasharray:5 3" points="${pts(d)}"/>`;
         const m = d[Math.floor(d.length / 2)];
-        if (ov.extra >= 0.2) s += `<text class="lbl" data-net="${esc(ov.net)}" x="${m[0]}" y="${m[1] - .4}" style="fill:var(--detour)">+${ov.extra.toFixed(1)} mm</text>`;
+        if (ov.extra >= 0.2) s += `<text class="lbl" data-net="${esc(ov.net)}" x="${m[0]}" y="${m[1]}" dy="-.6em" style="fill:var(--detour)">+${ov.extra.toFixed(1)} mm</text>`;
       }
     }
     s += '</g>';
@@ -308,35 +381,123 @@ function render() {
       const c = sevColor(ov.sev);
       const tip = nice(`${ov.net} · ${ov.layers.join('→')} via · ` + (ov.d == null ? 'no return path'
         : ov.kind === 'cap' ? `return through ${ov.cap}, ${ov.d.toFixed(2)} mm` : `nearest ${ov.via_net} via ${ov.d.toFixed(2)} mm`));
-      const dim = ov.sev === 'INFO' ? ';opacity:.55' : '';
+      // a class, not an inline opacity, so the selection dimming rule still wins
+      const cls = ov.sev === 'INFO' ? 'ovl dim' : 'ovl';
       if (ov.to) {
-        s += `<line class="ovl" data-net="${esc(ov.net)}" data-tip="${tip}" x1="${ov.pos[0]}" y1="${ov.pos[1]}" x2="${ov.to[0]}" y2="${ov.to[1]}" style="stroke:${c};stroke-width:2px;stroke-dasharray:4 3${dim}"/>`;
-        s += `<circle class="ovl" data-net="${esc(ov.net)}" cx="${ov.to[0]}" cy="${ov.to[1]}" r=".38" style="stroke:var(--ok);stroke-width:1.6px${dim}"/>`;
+        s += `<line class="${cls}" data-net="${esc(ov.net)}" data-tip="${tip}" x1="${ov.pos[0]}" y1="${ov.pos[1]}" x2="${ov.to[0]}" y2="${ov.to[1]}" style="stroke:${c};stroke-width:2px;stroke-dasharray:4 3"/>`;
+        s += `<circle class="${cls}" data-net="${esc(ov.net)}" cx="${ov.to[0]}" cy="${ov.to[1]}" r=".38" style="stroke:var(--ok);stroke-width:1.6px"/>`;
         if (ov.sev !== 'INFO') {
           const mx = (ov.pos[0] + ov.to[0]) / 2, my = (ov.pos[1] + ov.to[1]) / 2;
-          s += `<text class="lbl" data-net="${esc(ov.net)}" x="${mx}" y="${my - .35}" style="fill:${c}">${ov.d.toFixed(1)} mm</text>`;
+          s += `<text class="lbl" data-net="${esc(ov.net)}" x="${mx}" y="${my}" dy="-.6em" style="fill:${c}">${ov.d.toFixed(1)} mm</text>`;
         }
       }
-      s += `<circle class="ovl" data-net="${esc(ov.net)}" data-tip="${tip}" cx="${ov.pos[0]}" cy="${ov.pos[1]}" r=".42" style="stroke:${c};stroke-width:2.4px${dim}"/>`;
+      s += `<circle class="${cls}" data-net="${esc(ov.net)}" data-tip="${tip}" cx="${ov.pos[0]}" cy="${ov.pos[1]}" r=".42" style="stroke:${c};stroke-width:2.4px"/>`;
     }
     s += '</g>';
   }
   if (state.show.labels)
     s += '<g>' + g.refs.filter(r => all || !side || r[3] === side).map(r => `<text class="ref" x="${r[1]}" y="${r[2]}">${esc(r[0])}</text>`).join('') + '</g>';
-  s += '<g id="markers"></g>';
+  s += '<g id="sel"></g><g id="markers"></g>';
   svg.innerHTML = s;
   applySel();
+}
+
+// Signal path and predicted return path of the selected net. The return is drawn as a translucent,
+// hatched band with a dashed centreline in the colour of the plane carrying it, so it can't be
+// mistaken for copper: directly under the trace, around plane gaps, and at each layer change out to
+// the return via on one plane and back on the other (the two legs are drawn side by side).
+function renderSelection() {
+  const g = svg.querySelector('#sel');
+  const net = state.sel, on = !!net && state.show.returns;
+  svg.classList.toggle('retmode', on);
+  if (!g) return;
+  if (!on) { g.innerHTML = ''; return; }
+  const O = D.overlays, TH = D.meta.thresholds;
+  const bands = {}, lines = [], halos = [], marks = [], labels = [];
+  const band = (plane, p, hw) => (bands[plane] = bands[plane] || []).push(`<polyline points="${pts(p)}" stroke-width="${(2 * hw).toFixed(3)}"/>`);
+  const cline = (plane, p, tip) => lines.push(`<polyline class="rline" style="stroke:${planeVar(plane)}" points="${pts(p)}" data-tip="${esc(tip)}"/>`);
+  const label = (x, y, text, color) => labels.push(`<text class="lbl" x="${x}" y="${y}" dy="-.6em" style="fill:${color}">${esc(text)}</text>`);
+  const cross = (x, y, tip) => marks.push(`<path class="xmark" d="M${x - .4} ${y - .4}L${x + .4} ${y + .4}M${x - .4} ${y + .4}L${x + .4} ${y - .4}" data-tip="${esc(tip)}"/>`);
+
+  // 1. in the reference plane, directly under the trace
+  for (const r of O.returns) if (r.net === net) {
+    band(r.plane, r.p, r.hw);
+    cline(r.plane, r.p, `Predicted return current · in ${r.plane}, directly under the trace`);
+  }
+  // 2. around gaps in the plane
+  for (const v of O.voids) if (v.net === net) {
+    if (!v.minor) for (const tr of v.trace)
+      halos.push(`<polyline class="gap" points="${pts(tr)}" data-tip="${esc(`Trace over a gap in ${v.ref}`)}"/>`);
+    for (const d of v.detours) {
+      band(v.ref, d, v.hw);
+      cline(v.ref, d, `Predicted return current · around a gap in ${v.ref}` + (v.extra >= 0.05 ? `, +${v.extra.toFixed(2)} mm` : ''));
+      if (!v.minor) {
+        const m = d[Math.floor(d.length / 2)];
+        label(m[0], m[1], `+${v.extra.toFixed(1)} mm`, v.extra > TH.max_detour ? 'var(--fail)' : 'var(--warn)');
+      }
+    }
+    if (v.kind !== 'VOID') cross(v.mid[0], v.mid[1], {
+      ISLAND: `No return path · ${v.ref} copper isn't connected across this gap`,
+      SPLIT: 'Plane changes net under the trace · the return has to cross through a capacitor',
+      TERMINAL: 'No plane under this trace end · return path undefined here',
+    }[v.kind] || v.kind);
+  }
+  // 3. layer changes: out along one plane to the return via, back along the other
+  for (const v of O.vias) if (v.net === net) {
+    const P = v.pos, [pa, pb] = v.planes || [];
+    if (!v.to) { cross(P[0], P[1], 'No return path · no return via or capacitor found for this layer change'); continue; }
+    const via = v.kind === 'cap' ? `capacitor ${v.cap}` : `${v.via_net} via`;
+    const legs = v.kind === 'cap' ? [[pa, P, v.pads[0]], [pb, v.pads[1], P]] : [[pa, P, v.to], [pb, v.to, P]];
+    legs.forEach(([plane, a, b], k) => {
+      const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1, o = k ? -0.17 : 0.17;
+      const p = [[a[0] - dy / L * o, a[1] + dx / L * o], [b[0] - dy / L * o, b[1] + dx / L * o]];
+      band(plane, p, 0.13);
+      cline(plane, p, `Predicted return current · in ${plane}, ${k ? 'back from' : 'out to'} the ${via}`);
+    });
+    if (v.kind === 'cap')
+      lines.push(`<line class="rcap" x1="${v.pads[0][0]}" y1="${v.pads[0][1]}" x2="${v.pads[1][0]}" y2="${v.pads[1][1]}" data-tip="${esc(`Return crosses between the planes through ${v.cap}`)}"/>`);
+    const Q = v.to, col = v.sev === 'FAIL' ? 'var(--fail)' : v.sev === 'WARN' ? 'var(--warn)' : 'var(--muted)';
+    const tip = v.kind === 'cap' ? `Return through ${v.cap}` : `Return via · ${v.via_net}, joins ${pa} and ${pb} · ${v.d.toFixed(2)} mm from the signal via`;
+    marks.push(`<circle class="rvia" cx="${Q[0]}" cy="${Q[1]}" r=".34" data-tip="${esc(tip)}"/><circle class="rvia-dot" cx="${Q[0]}" cy="${Q[1]}" r=".1"/>`);
+    label((P[0] + Q[0]) / 2, (P[1] + Q[1]) / 2, `${v.d.toFixed(1)} mm`, col);
+  }
+  // 4. the signal path itself, on top: real width, never thinner than 2.2 px, on a dark casing
+  let casing = '', sig = '';
+  for (const t of D.geo.tracks) if (t.n === net) {
+    const c = sigColor(t.l), p = pts(t.p), tip = esc(`Signal · ${t.l}, ${t.w} mm track`);
+    casing += `<polyline class="sig-case" points="${p}"/>`;
+    sig += `<polyline class="sig" stroke-width="${t.w}" style="stroke:${c}" points="${p}" data-tip="${tip}"/>`
+      + `<polyline class="sig-min" style="stroke:${c}" points="${p}" data-tip="${tip}"/>`;
+  }
+  const vias = D.geo.vias.filter(q => q[3] === net)
+    .map(q => `<circle class="svia" cx="${q[0]}" cy="${q[1]}" r="${q[2] / 2}" data-tip="Signal via"/>`).join('');
+
+  // group opacity keeps overlapping band segments from darkening at the joints
+  let s = '';
+  for (const [plane, arr] of Object.entries(bands)) {
+    const k = planeIdx(plane), body = arr.join(''), tip = esc(`Predicted return current · in ${plane} (a model, not copper)`);
+    s += `<g class="rband" style="stroke:var(--rp-${k})" opacity=".22" data-tip="${tip}">${body}</g>`
+      + `<g class="rband" style="stroke:url(#hatch-${k})" data-tip="${tip}">${body}</g>`;
+  }
+  g.innerHTML = s + lines.join('') + halos.join('') + casing + sig + vias + marks.join('') + labels.join('');
 }
 
 function applySel() {
   svg.classList.toggle('has-sel', !!state.sel);
   for (const el of svg.querySelectorAll('[data-net]')) el.classList.toggle('sel', el.dataset.net === state.sel);
   for (const tr of document.querySelectorAll('#table tbody tr')) tr.classList.toggle('sel', tr.dataset.net === state.sel);
+  renderSelection();
+  renderLegend();
 }
 
 // ---------- pan / zoom
 let vb = null;
-const setVB = () => svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+const setVB = () => {
+  svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  const k = vb.w / (svg.clientWidth || 1);  // board mm per screen pixel
+  svg.style.setProperty('--fs-lbl', `${12 * k}px`);
+  svg.style.setProperty('--fs-ref', `${10 * k}px`);
+};
 function fit(b, pad = 2) {
   const r = svg.getBoundingClientRect();
   let ar = r.width / r.height;
@@ -376,7 +537,7 @@ svg.addEventListener('pointerleave', () => { $('#tip').style.display = 'none'; }
 svg.addEventListener('pointerup', e => {
   const wasDrag = drag && drag.moved > 3;
   drag = null; svg.classList.remove('dragging');
-  if (wasDrag) return;
+  if (wasDrag || e.target.closest('#sel')) return;  // clicking the selected net's drawing keeps it selected
   const el = e.target.closest('[data-net]');
   select(el ? el.dataset.net : null, false);
 });
@@ -391,17 +552,25 @@ new ResizeObserver(() => {
   const cy = vb.y + vb.h / 2; vb.h = vb.w * r.height / r.width; vb.y = cy - vb.h / 2; setVB();
 }).observe(svg);
 
+// Bounding box of a net's tracks plus the return path around it (detours and return vias can reach outside).
 function netBBox(net) {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const t of D.geo.tracks) if (t.n === net) for (const [x, y] of t.p) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
-  return x0 === Infinity ? null : [x0, y0, x1 - x0, y1 - y0];
+  const P = [];
+  for (const t of D.geo.tracks) if (t.n === net) P.push(...t.p);
+  for (const v of D.overlays.voids) if (v.net === net) for (const d of v.detours) P.push(...d);
+  for (const v of D.overlays.vias) if (v.net === net && v.to) P.push(v.to);
+  if (!P.length) return null;
+  const xs = P.map(p => p[0]), ys = P.map(p => p[1]);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  return [x0, y0, Math.max(...xs) - x0, Math.max(...ys) - y0];
 }
 
 function select(net, zoom) {
   state.sel = net;
   if (net && zoom) {
-    const onView = D.geo.tracks.some(t => t.n === net && (state.view === 'all' || t.l === state.view));
-    if (!onView) { state.view = 'all'; buildControls(); render(); }
+    // show the whole net: its own layer if it has only one, otherwise all layers
+    const layers = netLayers(net).filter(l => checkedLayers.includes(l));
+    const want = layers.length === 1 ? layers[0] : 'all';
+    if (state.view !== want) { state.view = want; buildControls(); render(); }
     const b = netBBox(net); if (b) fit(b, 3);
   }
   applySel(); renderDetail();
@@ -418,7 +587,7 @@ function renderDetail() {
   if (!n) {
     const t = D.meta.thresholds;
     el.innerHTML = `<h2>How to read this</h2>
-      <p class="muted" style="margin:0 0 10px">Click a trace or a table row to inspect a net. Each view shows one signal layer over the plane that carries its return current.</p>
+      <p class="muted" style="margin:0 0 10px">Click a trace or a table row to see that net's signal path (solid) and its predicted return path: a hatched band in the colour of the plane that carries it. Each layer view shows one signal layer over its reference plane.</p>
       <dl class="stats">
         <dt>Return length</dt><dd>trace + void detours + via transfers</dd>
         <dt>Ratio</dt><dd>return ÷ trace (1.00 = ideal)</dd>
@@ -431,23 +600,28 @@ function renderDetail() {
     return;
   }
   const iss = D.issues.filter(i => i.net === n.net).sort((a, b) => SEV[a.severity] - SEV[b.severity]);
+  const byLayer = Object.entries(n.sig_by_layer || {}).sort((a, b) => LAYER_ORDER(a[0]) - LAYER_ORDER(b[0]));
+  const byPlane = Object.entries(n.under_by_plane || {}).sort((a, b) => planeIdx(a[0]) - planeIdx(b[0]));
+  const sub = (label, v, swatch = '') => `<dt class="sub">${swatch}${label}</dt><dd class="sub">${v}</dd>`;
   el.innerHTML = `<div class="name">${nice(n.net)}</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
       <span class="badge b-${n.status}">${n.status}</span>
       <span class="badge" style="color:var(--c-${n.cls})">${n.cls}</span>
       ${n.netclass !== 'Default' ? `<span class="badge muted">${esc(n.netclass)}</span>` : ''}
     </div>
+    ${state.show.returns ? '<p class="explain">On the board: solid line = signal path; hatched band = predicted return current.</p>' : ''}
     <dl class="stats num">
-      <dt>Track length</dt><dd>${fmt(n.length)} mm</dd>
+      <dt>Signal path</dt><dd>${fmt(n.length)} mm</dd>
+      ${byLayer.map(([l, v]) => sub(`on ${esc(l)}`, fmt(v), `<i class="sw" style="border-color:${sigColor(l)}"></i>`)).join('')}
       <dt>Return path</dt><dd>${n.return_est == null ? 'no local return' : fmt(n.return_est) + ' mm'}</dd>
+      ${byPlane.map(([p, v]) => sub(`under trace, ${esc(p)}`, fmt(v), `<i class="band sm" style="--c:${planeVar(p)}"></i>`)).join('')}
+      ${n.unref >= 0.01 ? sub('across gaps, no plane', fmt(n.unref)) : ''}
+      ${n.void_extra >= 0.01 ? sub('extra around gaps', '+' + fmt(n.void_extra)) : ''}
+      ${n.transitions ? sub(`via transfers (${n.transitions})`, '+' + fmt(n.via_extra)) : ''}
+      ${n.worst_stitch != null ? sub('worst via distance', fmt(n.worst_stitch)) : ''}
       <dt>Ratio</dt><dd>${n.ratio == null ? '–' : fmt(n.ratio) + '×'}</dd>
       <dt>Loop area</dt><dd>${fmt(n.loop_area, 1)} mm²</dd>
-      <dt class="muted">&nbsp; under trace</dt><dd class="muted">${fmt(n.area_ref, 1)}</dd>
-      <dt class="muted">&nbsp; void detours</dt><dd class="muted">${fmt(n.area_void, 1)}</dd>
-      <dt class="muted">&nbsp; via transfers</dt><dd class="muted">${fmt(n.area_via, 1)}</dd>
-      <dt>Void detours</dt><dd>+${fmt(n.void_extra)} mm (${n.voids})</dd>
-      <dt>Via transfers</dt><dd>+${fmt(n.via_extra)} mm (${n.transitions})</dd>
-      <dt>Unreferenced</dt><dd>${fmt(n.unref)} mm</dd>
+      ${sub('under trace', fmt(n.area_ref, 1))}${sub('around gaps', fmt(n.area_void, 1))}${sub('via transfers', fmt(n.area_via, 1))}
       <dt>Near plane edge</dt><dd>${fmt(n.edge)} mm</dd>
     </dl>
     <h2 style="margin-top:4px">Issues <span class="muted">(${iss.length})</span></h2>
@@ -533,7 +707,7 @@ $('#table thead').onclick = e => {
 };
 $('#table tbody').onclick = e => { const tr = e.target.closest('tr'); if (tr) { select(tr.dataset.net, true); svg.scrollIntoView({ behavior: 'smooth', block: 'center' }); } };
 
-buildControls(); renderLegend(); render(); fitBoard(); renderDetail(); buildFilters(); renderTable();
+buildControls(); render(); fitBoard(); renderDetail(); buildFilters(); renderTable();
 </script>
 </body>
 </html>

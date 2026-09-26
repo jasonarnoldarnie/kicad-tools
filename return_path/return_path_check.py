@@ -87,6 +87,13 @@ CLASS_RULES = [
 ]
 SEV_RANK = {"FAIL": 0, "WARN": 1, "INFO": 2}
 
+# The HTML report draws the predicted return current as a band of half-width
+# w/2 + k*h around the trace: with the current density in the plane falling off
+# as 1/(1 + (x/h)^2), about 80 % of it flows within 3h of the centreline.
+# Capped so traces far from their plane don't produce huge bands.
+RETURN_BAND_K = 3.0
+RETURN_BAND_MAX = 2.0
+
 
 # --------------------------------------------------------------------------
 # Stackup
@@ -227,6 +234,20 @@ def poly_contours(polyset):
             if n >= 3:
                 out.append(np.array([(ch.CPoint(k).x, ch.CPoint(k).y) for k in range(n)], float) / NM)
     return out
+
+
+def unfractured(polyset):
+    """Copy of a zone fill with its holes restored as holes.
+
+    KiCad stores fills "fractured": each hole is joined to the outline by a
+    zero-width horizontal cut. The cuts don't change the copper (and the raster
+    skips horizontal edges), but drawn as outlines they show up as long lines."""
+    p = pcbnew.SHAPE_POLY_SET(polyset)
+    try:
+        p.Unfracture()
+    except TypeError:  # older KiCad versions take a POLYGON_MODE argument
+        p.Unfracture(pcbnew.SHAPE_POLY_SET.PM_FAST)
+    return p
 
 
 class Plane:
@@ -400,6 +421,31 @@ def rnd(pts):
     return [[round(x, 3), round(y, 3)] for x, y in pts]
 
 
+def rdp(pts, tol):
+    """Ramer-Douglas-Peucker: drop polyline points within tol (mm) of the line."""
+    if len(pts) < 3:
+        return list(pts)
+    keep = [False] * len(pts)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(pts) - 1)]
+    while stack:
+        i, j = stack.pop()
+        (x0, y0), (x1, y1) = pts[i], pts[j]
+        dx, dy = x1 - x0, y1 - y0
+        length = math.hypot(dx, dy)
+        worst, idx = tol, None
+        for k in range(i + 1, j):
+            px, py = pts[k]
+            d = (abs(dy * (px - x0) - dx * (py - y0)) / length if length
+                 else math.hypot(px - x0, py - y0))
+            if d > worst:
+                worst, idx = d, k
+        if idx is not None:
+            keep[idx] = True
+            stack += [(i, idx), (idx, j)]
+    return [p for p, k in zip(pts, keep) if k]
+
+
 def sample_track(t, step):
     """Return (points[(x,y)], tangents[(tx,ty)], ds) along a track or arc."""
     a, b = mm(t.GetStart()), mm(t.GetEnd())
@@ -510,7 +556,8 @@ def analyse(args):
         for lid in z.GetLayerSet().Seq():
             if not pcbnew.IsCopperLayer(lid):
                 continue
-            contours = poly_contours(z.GetFilledPolysList(lid))
+            fill = z.GetFilledPolysList(lid)
+            contours = poly_contours(fill)
             if not contours:
                 continue
             lname = board.GetLayerName(lid)
@@ -518,7 +565,8 @@ def analyse(args):
                 planes[lname] = Plane((x0, y0), (ny, nx), args.res)
             planes[lname].add(contours, z.GetNetCode())
             zone_nets.add(z.GetNetname())
-            geo["planes"][lname].append(dict(net=z.GetNetname(), c=[rnd(c) for c in contours]))
+            geo["planes"][lname].append(dict(net=z.GetNetname(),
+                                             c=[rnd(c) for c in poly_contours(unfractured(fill))]))
 
     stackup = parse_stackup(args.board)
     refs = reference_map(board, stackup, set(planes), args.ref)
@@ -570,7 +618,7 @@ def analyse(args):
             caps.append((ref, [(p.GetNetname(), mm(p.GetPosition())) for p in fp_pads]))
 
     issues = []
-    overlays = dict(voids=[], vias=[], edges=[])
+    overlays = dict(voids=[], vias=[], edges=[], returns=[])
     summary = {}
 
     for net, tracks in sorted(tracks_by_net.items()):
@@ -581,7 +629,8 @@ def analyse(args):
                  netclass=",".join(c for c in name_to_class.get(net, []) if c != "Default") or "Default",
                  length=0.0, unref=0.0, edge=0.0, voids=0, void_extra=0.0,
                  transitions=0, via_extra=0.0, worst_stitch=None, broken=False,
-                 area_ref=0.0, area_void=0.0, area_via=0.0)
+                 area_ref=0.0, area_void=0.0, area_via=0.0,
+                 sig_by_layer=defaultdict(float), under_by_plane=defaultdict(float))
         summary[net] = s
 
         def issue(kind, severity, layer, pos, value, msg):
@@ -603,6 +652,7 @@ def analyse(args):
             pts, tans, ds = sample_track(t, args.step)
             seg_len = ds * (len(pts) - 1)
             s["length"] += seg_len
+            s["sig_by_layer"][lname] += seg_len
             ref = refs.get(lname)
             if not ref or ref[0] not in planes:
                 s["unref"] += seg_len
@@ -613,7 +663,15 @@ def analyse(args):
             labels = [plane.label(x, y) for x, y in pts]
             w = t.GetWidth() / NM
             off = w / 2 + args.edge_k * h
+            hw = min(w / 2 + RETURN_BAND_K * h, RETURN_BAND_MAX)
             n = len(pts)
+
+            # predicted return current: directly under each referenced stretch of trace
+            for i, j in runs_of([lab != 0 for lab in labels]):
+                if j > i:
+                    s["under_by_plane"][ref[0]] += (j - i) * ds
+                    overlays["returns"].append(dict(net=net, plane=ref[0], hw=round(hw, 3),
+                                                    p=rnd(rdp(pts[i:j + 1], 0.005))))
 
             for i, j in runs_of([lab == 0 for lab in labels]):
                 bounds, ends = [], []
@@ -626,7 +684,7 @@ def analyse(args):
                 else:
                     ends.append((round(pts[-1][0], 2), round(pts[-1][1], 2), lname))
                 runs.append(dict(len=(j - i + 1) * ds, bounds=bounds, ends=ends, layer=lname,
-                                 ref=ref[0], h=h, mid=pts[(i + j) // 2],
+                                 ref=ref[0], h=h, hw=hw, mid=pts[(i + j) // 2],
                                  pts=pts[max(i - 1, 0):j + 2]))
                 s["unref"] += (j - i + 1) * ds
 
@@ -675,7 +733,8 @@ def analyse(args):
             bounds = [b for r in g for b in r["bounds"]]
             layer, refl, mid, h = g[0]["layer"], g[0]["ref"], g[0]["mid"], g[0]["h"]
             trace_pts = [rnd(r["pts"]) for r in g]
-            ov = dict(net=net, layer=layer, trace=trace_pts, detours=[], extra=0.0, kind="VOID")
+            ov = dict(net=net, layer=layer, ref=refl, hw=round(g[0]["hw"], 3), mid=rnd([mid])[0],
+                      trace=trace_pts, detours=[], extra=0.0, kind="VOID", minor=False)
             if len(bounds) < 2:
                 s["area_void"] += total * h  # lower bound: return path unknown
                 if total > args.terminal_tol:
@@ -714,8 +773,10 @@ def analyse(args):
             s["voids"] += 1
             s["void_extra"] += worst
             ov["extra"] = round(worst, 3)
-            if worst >= args.report_min or ov["kind"] != "VOID":
-                overlays["voids"].append(ov)
+            # Minor detours (round an antipad, say) are only drawn as part of a
+            # selected net's return path, so the board view stays readable.
+            ov["minor"] = ov["kind"] == "VOID" and worst < args.report_min
+            overlays["voids"].append(ov)
             if worst >= args.report_min:
                 sev = "FAIL" if worst > args.max_detour else "WARN"
                 issue("VOID", sev, layer, mid, worst,
@@ -744,7 +805,8 @@ def analyse(args):
             na = planes[ra].label_near(*pos, 1.5)
             nb = planes[rb].label_near(*pos, 1.5)
             where = f"{'/'.join(sorted(layers))} via"
-            ov = dict(net=net, pos=rnd([pos])[0], layers=sorted(layers), to=None, d=None, kind="stitch")
+            ov = dict(net=net, pos=rnd([pos])[0], layers=sorted(layers), planes=[ra, rb],
+                      to=None, d=None, kind="stitch")
             overlays["vias"].append(ov)
             if not na or not nb:
                 ov["sev"] = "FAIL"
@@ -783,19 +845,20 @@ def analyse(args):
                             for y in pb:
                                 loop = math.dist(pos, x) + math.dist(x, y) + math.dist(y, pos)
                                 if best is None or loop < best[0]:
-                                    best = (loop, cref, x)
+                                    best = (loop, cref, x, y)
                 if best is None:
                     ov["sev"] = "FAIL"
                     issue("VIA", "FAIL", where, pos, None,
                           f"{ra}({a_name})->{rb}({b_name}): no capacitor bridges the planes")
                     s["broken"] = True
                     continue
-                loop, cref, cpos = best
+                loop, cref, cpos, cpos_b = best
                 s["via_extra"] += loop
                 s["area_via"] += loop / 2 * dz
                 s["worst_stitch"] = max(s["worst_stitch"] or 0, loop / 2)
                 sev = "FAIL" if loop / 2 > args.max_cap else "WARN"
-                ov.update(to=rnd([cpos])[0], d=round(loop / 2, 3), sev=sev, kind="cap", cap=cref)
+                ov.update(to=rnd([cpos])[0], pads=rnd([cpos, cpos_b]), d=round(loop / 2, 3), sev=sev,
+                          kind="cap", cap=cref)
                 issue("VIA", sev, where, pos, loop,
                       f"{ra}({a_name})->{rb}({b_name}): return via {cref}, +{loop:.2f} mm")
 
@@ -805,6 +868,8 @@ def analyse(args):
         s["loop_area"] = s["area_ref"] + s["area_void"] + s["area_via"]
         sev = [i["severity"] for i in issues if i["net"] == s["net"]]
         s["status"] = "FAIL" if "FAIL" in sev else "WARN" if "WARN" in sev else "OK"
+        for k in ("sig_by_layer", "under_by_plane"):
+            s[k] = {name: round(v, 3) for name, v in s[k].items()}
         for k, v in list(s.items()):
             if isinstance(v, float):
                 s[k] = round(v, 3)
@@ -818,8 +883,9 @@ def analyse(args):
     meta = dict(board=os.path.basename(args.board), generated=datetime.datetime.now().isoformat(timespec="minutes"),
                 classes=CLASSES, class_file=class_file if class_overrides else None,
                 thresholds=dict(max_detour=args.max_detour, max_stitch=args.max_stitch,
-                                max_cap=args.max_cap, edge_k=args.edge_k),
-                references={k: dict(layer=v[0], h=round(v[1], 4)) for k, v in refs.items()})
+                                max_cap=args.max_cap, edge_k=args.edge_k, report_min=args.report_min),
+                references={k: dict(layer=v[0], h=round(v[1], 4)) for k, v in refs.items()},
+                planes=sorted(planes, key=lambda l: zpos.get(l, 0)), return_band_k=RETURN_BAND_K)
     return dict(meta=meta, nets=list(summary.values()), issues=issues, overlays=overlays, geo=geo)
 
 

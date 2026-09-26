@@ -66,8 +66,16 @@ glob. First match wins; see [`return_path/classes.example.json`](return_path/cla
 - Text summary and issue list on stdout.
 - `--html FILE` — self-contained interactive report: each signal layer drawn over its reference
   plane, traces coloured by status or class, void crossings with their detour paths, each signal via
-  linked to its nearest return via, and a sortable, filterable per-net table. Click a trace or a row
-  to inspect a net. The page template is `return_path/return_path_report.html`.
+  linked to its nearest return via, and a sortable, filterable per-net table. The page template is
+  `return_path/return_path_report.html`.
+
+  Click a trace or a row to select a net and see its **signal path** (solid) and **predicted return
+  path**: a translucent, hatched band with a dashed centreline, so it can't be mistaken for copper.
+  The band runs in the plane directly under the trace (±3h wide, where about 80 % of the return
+  current flows), detours around plane gaps, and at each layer change goes out to the nearest return
+  via on one plane and back on the other. Each reference plane has its own colour, and a trace is
+  drawn in the colour of the plane carrying its return, so you can see where the return changes
+  plane.
 - `--json FILE` — summary and issues for scripting.
 - `--fail` — exit 1 if any net FAILs, for CI.
 
